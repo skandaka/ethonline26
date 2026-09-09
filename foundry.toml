@@ -1,0 +1,31 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+optimizer = true
+optimizer_runs = 11111
+solc = "0.8.26"
+bytecode_hash = "none"
+evm_version = "cancun"
+verbosity = 2
+
+remappings = [
+  "continuous-clearing-auction/=lib/continuous-clearing-auction/src/",
+  "forge-std/=lib/continuous-clearing-auction/lib/forge-std/src/",
+  "solady/=lib/continuous-clearing-auction/lib/solady/src/",
+  "@openzeppelin/contracts/=lib/continuous-clearing-auction/lib/openzeppelin-contracts/contracts/",
+  "liquidity-launcher/=lib/continuous-clearing-auction/lib/liquidity-launcher/",
+  "blocknumberish/=lib/continuous-clearing-auction/lib/blocknumberish/",
+  "v4-periphery/=lib/continuous-clearing-auction/lib/v4-periphery/",
+  "permit2/=lib/continuous-clearing-auction/lib/permit2/",
+]
+
+[profile.default.fuzz]
+runs = 256
+
+[fmt]
+line_length = 120
+tab_width = 4
+quote_style = "single"
+number_underscore = "thousands"
