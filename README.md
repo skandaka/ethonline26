@@ -9,11 +9,12 @@ Built for ETHOnline 2026 · Uniswap Foundation track
 ## The problem
 
 Uniswap's [Continuous Clearing Auction](https://github.com/Uniswap/continuous-clearing-auction) (CCA)
-is the protocol behind token launches in the Uniswap web app. When you are outbid in a CCA, your
-unspent currency is not stuck until the auction ends — the protocol deliberately lets you exit
-early and recover your capital.
+is the protocol behind token launches in the Uniswap web app — the first one
+[raised $59M from ~16,700 bidders](https://blog.uniswap.org/aztec-cca) for Aztec, clearing 60% above
+its floor. When you are outbid, your unspent currency is not stuck until the auction ends: the
+protocol deliberately lets you exit early and recover your capital.
 
-Except, in practice, you often can't. Getting your money out means calling:
+Claiming it means calling:
 
 ```solidity
 function exitPartiallyFilledBid(
@@ -110,12 +111,9 @@ The auction documents an invariant in its own source:
 
 So a bid's lifetime splits into three **contiguous, monotonically ordered** regions:
 
-```
-   [ clearingPrice < maxPrice ] [ clearingPrice == maxPrice ] [ clearingPrice > maxPrice ]
-          fully filled                partially filled                  outbid
-                     ^                                          ^
-     lastFullyFilledCheckpointBlock                        outbidBlock
-```
+![A bid's lifetime is three ordered regions: fully filled where the clearing price is below the bid,
+partially filled where it equals the bid, and outbid where it is above. The two hints are the
+boundaries between them.](./docs/bid-lifetime.svg)
 
 Those two boundaries are precisely the hints `exitPartiallyFilledBid` validates. A single forward
 walk finds both, and monotonicity lets it stop at the first checkpoint above the bid.
@@ -303,14 +301,18 @@ across every auction — the same deployment model as Uniswap's own `CCALens`.
 ## Build
 
 ```bash
-git clone --recurse-submodules <this repo>
+git clone <this repo>
 cd ethonline26
+./script/fetch-deps.sh
 forge test
 ```
 
-Requires Foundry and solc 0.8.26. The submodule pulls in Uniswap's CCA contracts and their
-dependencies (~500MB); `git submodule update --init --recursive` if you cloned without
-`--recurse-submodules`.
+Requires Foundry and solc 0.8.26.
+
+Use `script/fetch-deps.sh` rather than `git submodule update --init --recursive`. The recursive
+form pulls **~930MB**, because Uniswap's `liquidity-launcher` vendors `uerc20-factory` (150MB) and
+`optimism` (131MB) that nothing here imports. Naming only the submodules this project compiles
+against brings it to **69MB in about 20 seconds**. CI uses the same script.
 
 ## Feedback to the Uniswap Foundation
 

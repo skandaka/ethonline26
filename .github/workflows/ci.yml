@@ -1,9 +1,16 @@
 name: CI
 
 on:
+  # Only the default branch on push. Branches with an open PR are covered by the
+  # pull_request trigger, and listening to both ran every commit twice.
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
+
+# Supersede in-flight runs for the same ref rather than letting them pile up.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   FOUNDRY_PROFILE: ci
@@ -14,8 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Fetch contract dependencies
+        run: ./script/fetch-deps.sh
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
@@ -46,8 +54,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Fetch contract dependencies
+        run: ./script/fetch-deps.sh
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
