@@ -229,6 +229,13 @@ contract CCAExitLensTest is CCAExitTestBase {
         ExitPlan memory plan = lens.resolveExitPlan(auction, aliceBid);
         assertEq(uint8(plan.route), uint8(ExitRoute.ALREADY_EXITED), 'route');
         assertTrue(plan.hintsResolved, 'already-exited plans are terminal');
+
+        // A settled bid must still report accurate auction state. Returning early without it would
+        // tell a portfolio view that a graduated auction had not graduated.
+        assertTrue(plan.graduated, 'graduated flag should survive the early return');
+        assertEq(plan.clearingPrice, auction.clearingPrice(), 'clearing price should be populated');
+        assertEq(plan.owner, alice, 'owner should be populated');
+        assertEq(plan.bidMaxPrice, _price(2), 'bid max price should be populated');
     }
 
     // ---------------------------------------------------------------------

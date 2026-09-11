@@ -127,15 +127,13 @@ contract CCAExitLens {
         plan.owner = bid.owner;
         plan.bidMaxPrice = bid.maxPrice;
 
-        if (bid.exitedBlock != 0) {
-            plan.route = ExitRoute.ALREADY_EXITED;
-            plan.hintsResolved = true;
-            return plan;
-        }
-
         // Bring the auction up to date. `exitPartiallyFilledBid` checkpoints before it validates
         // the hints, and that checkpoint can itself be the one that outbids this bid, so the hints
         // must be computed against post-checkpoint state.
+        //
+        // This runs before the already-exited check so that every plan carries accurate auction
+        // state, including plans for settled bids — a caller rendering a portfolio should not be
+        // told an auction has not graduated simply because the bid it asked about is closed.
         uint256 clearing;
         try auction.checkpoint() returns (Checkpoint memory current) {
             clearing = current.clearingPrice;
@@ -151,6 +149,12 @@ contract CCAExitLens {
         // auction has ended. This mirrors `onlyAfterAuctionIsOver` without re-deriving the
         // chain-specific block number that `BlockNumberish` resolves for the auction.
         plan.auctionOver = auction.lastCheckpointedBlock() >= auction.endBlock();
+
+        if (bid.exitedBlock != 0) {
+            plan.route = ExitRoute.ALREADY_EXITED;
+            plan.hintsResolved = true;
+            return plan;
+        }
 
         if (!plan.graduated) {
             // A failed auction refunds in full through either exit function once it is over.

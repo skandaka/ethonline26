@@ -232,6 +232,38 @@ do {
 } while (!plan.hintsResolved);
 ```
 
+## SDK
+
+A wallet integrating this writes TypeScript, not Solidity, so `sdk/` ships a viem-based client and a
+CLI:
+
+```js
+import { resolveExitPlansForOwner, isSettleable, buildRouterExitCall } from 'cca-exit-sdk';
+
+// One eth_call: every position this wallet holds in the auction, with hints resolved.
+const plans = await resolveExitPlansForOwner(client, { lens, auction, owner });
+
+for (const plan of plans.filter(isSettleable)) {
+  await wallet.writeContract(buildRouterExitCall({ router, auction, bidId: plan.bidId }));
+}
+```
+
+```console
+$ cca-exit plan --lens 0x5FbD.. --auction 0xCf7E.. --bid 0
+bid 0  owner 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  route                          : EXIT_PARTIALLY_FILLED
+  lastFullyFilledCheckpointBlock : 16
+  outbidBlock                    : 17
+  checkpoints walked             : 3
+  graduated / over               : true / false
+
+settleable now: yes
+```
+
+`cca-exit scan --owner <addr>` lists a wallet's positions; `cca-exit settle --bid <id>` simulates and
+then settles through the router. Run the whole thing against a local chain with
+`./demo/run-sdk-demo.sh`.
+
 ## Demo
 
 ```bash
@@ -254,6 +286,10 @@ script/
   DemoSetup.s.sol         Deploys a demo-sized auction alongside them.
 demo/
   run-demo.sh             End-to-end scenario against a local anvil node.
+  run-sdk-demo.sh         The same scenario driven through the SDK and CLI.
+sdk/
+  src/index.js            viem client: resolve plans, build settlement calls.
+  bin/cca-exit.js         CLI: plan / scan / settle.
 test/
   CCAExitLens.t.sol       13 differential tests against real auctions, incl. fuzz.
   PendingCheckpoint.t.sol Lens vs. event-driven resolution, incl. a 256-run agreement fuzz.
