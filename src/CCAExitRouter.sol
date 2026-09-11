@@ -92,6 +92,35 @@ contract CCAExitRouter {
         }
     }
 
+    /// @notice Settle every currently-settleable bid in a range, whoever owns them.
+    /// @dev This is the capability an offchain indexer cannot provide at all: discovery and
+    ///      settlement together, inside one transaction. A keeper can sweep an auction and return
+    ///      capital to outbid bidders who never transact themselves — every refund goes to its own
+    ///      `bid.owner`, so the keeper moves no value to itself and needs no trust.
+    ///
+    ///      Bids that are not settleable yet are skipped rather than reverting the sweep.
+    /// @param auction The auction to sweep.
+    /// @param fromBidId First bid id to consider, inclusive.
+    /// @param toBidId Last bid id to consider, exclusive. Clamped to the auction's `nextBidId()`.
+    /// @return settled How many bids were settled.
+    function sweep(IContinuousClearingAuction auction, uint256 fromBidId, uint256 toBidId)
+        external
+        returns (uint256 settled)
+    {
+        uint256 nextBidId = auction.nextBidId();
+        if (toBidId > nextBidId) toBidId = nextBidId;
+
+        for (uint256 id = fromBidId; id < toBidId; ++id) {
+            try this.exit(auction, id) returns (ExitRoute) {
+                unchecked {
+                    ++settled;
+                }
+            } catch {
+                // Not settleable at this block, or already exited. Leave it for a later sweep.
+            }
+        }
+    }
+
     /// @notice Settle a bid and, if the auction is already claimable, claim its tokens too.
     /// @dev The claim is attempted only after a successful exit and is allowed to fail: the auction
     ///      rejects claims before its claim block, and that must not undo the refund.

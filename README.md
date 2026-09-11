@@ -210,11 +210,18 @@ router.exit(auction, bidId);                       // one bid
 router.exitBatch(auction, bidIds);                 // several, all-or-nothing
 router.exitSkippingFailures(auction, bidIds);      // settle whatever is ready
 router.exitAndClaim(auction, bidId);               // settle, then claim tokens if claimable
+router.sweep(auction, 0, auction.nextBidId());     // settle every settleable bid in the auction
 ```
 
 Safe to call on anyone's behalf, because of two properties of the auction itself: exits have **no
 caller restriction**, and `_processExit` always pays the refund to `bid.owner`, never to
 `msg.sender`. The router cannot redirect value.
+
+`sweep` is the one that isn't sugar. Discovery and settlement happen **together, in one
+transaction, from a contract** — so a keeper can return capital to outbid bidders who never
+transact themselves. An indexer can tell you which bids are settleable; it cannot settle them.
+`test_keeperSweepsAuctionAndRefundsEveryoneElse` shows an unrelated keeper refunding two bidders
+and ending with a zero balance, as does the router.
 
 ### Scan a wallet's bids
 

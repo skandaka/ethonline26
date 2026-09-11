@@ -338,6 +338,57 @@ contract CCAExitLensTest is CCAExitTestBase {
     }
 
     // ---------------------------------------------------------------------
+    // The capability an offchain indexer cannot have: settlement from a contract.
+    // ---------------------------------------------------------------------
+
+    /// @notice A keeper sweeps an auction and returns capital to bidders who never transact.
+    /// @dev Discovery and settlement happen together, in one transaction, from a contract. An
+    ///      indexer can tell you which bids are settleable but cannot settle them.
+    function test_keeperSweepsAuctionAndRefundsEveryoneElse() public {
+        _deployAuction(0);
+
+        uint256 aliceBid = _bid(alice, _costOf(1e18, _price(2)), _price(2));
+        uint256 bobBid = _bid(bob, _costOf(1e18, _price(3)), _price(3));
+        _advance(10);
+        _floodAndRegister(carol, _price(9)); // outbids both
+
+        uint256 aliceBefore = alice.balance;
+        uint256 bobBefore = bob.balance;
+
+        // A keeper with no relationship to either bidder settles the whole auction.
+        address keeper = makeAddr('keeper');
+        vm.prank(keeper);
+        uint256 settled = router.sweep(auction, 0, auction.nextBidId());
+
+        assertEq(settled, 2, 'both outbid bids should settle');
+        assertGt(alice.balance, aliceBefore, 'alice refunded without transacting');
+        assertGt(bob.balance, bobBefore, 'bob refunded without transacting');
+        assertGt(auction.bids(aliceBid).exitedBlock, 0, 'alice bid exited');
+        assertGt(auction.bids(bobBid).exitedBlock, 0, 'bob bid exited');
+
+        // The keeper moved no value to itself.
+        assertEq(keeper.balance, 0, 'keeper should gain nothing');
+        assertEq(address(router).balance, 0, 'router should hold nothing');
+    }
+
+    /// @notice A sweep skips bids that are not settleable instead of reverting.
+    function test_sweepSkipsUnsettleableBids() public {
+        _deployAuction(0);
+
+        uint256 aliceBid = _bid(alice, _costOf(1e18, _price(2)), _price(2));
+        _advance(10);
+        _floodAndRegister(bob, _price(4)); // outbids alice, but bob himself is still winning
+
+        uint256 settled = router.sweep(auction, 0, auction.nextBidId());
+
+        assertEq(settled, 1, 'only the outbid bid should settle');
+        assertGt(auction.bids(aliceBid).exitedBlock, 0, 'alice bid exited');
+
+        // A second sweep is a no-op rather than a revert.
+        assertEq(router.sweep(auction, 0, auction.nextBidId()), 0, 're-sweep settles nothing');
+    }
+
+    // ---------------------------------------------------------------------
     // Fuzz: whatever the lens says is settleable, the auction accepts.
     // ---------------------------------------------------------------------
 
