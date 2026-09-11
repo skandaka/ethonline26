@@ -131,9 +131,19 @@ Uniswap contracts vendored in `lib/continuous-clearing-auction` (pinned at `6c9e
 | Offchain RPC round trips replaced | **99 → 1** |
 | Fuzz runs passing | **2,000** (settlement) + **256** (indexer agreement) |
 
-At ~2.6k gas per checkpoint, a standard 50M-gas `eth_call` resolves roughly 19,000 checkpoints,
-which is why `DEFAULT_MAX_HOPS` is 20,000. Auctions beyond that are still resolvable through the
-paged entrypoint.
+The walk is linear, measured rather than extrapolated (`test_benchmark_scaling`):
+
+| checkpoints walked | gas | marginal gas/checkpoint |
+|---|---|---|
+| 12 | 41,513 | — |
+| 27 | 78,002 | 2,433 |
+| 52 | 139,099 | 2,444 |
+| 92 | 237,585 | 2,462 |
+
+Marginal cost is flat at ~2,450 gas; the fixed ~12k overhead is what makes the *average* per
+checkpoint fall as the list grows. A standard 50M-gas `eth_call` therefore covers roughly 20,000
+checkpoints, which is where `DEFAULT_MAX_HOPS` is set. Longer auctions are still resolvable through
+the paged entrypoint.
 
 ### Correctness
 
