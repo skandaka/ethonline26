@@ -62,22 +62,30 @@ round trip per checkpoint, strictly serialized, so it cannot be batched or multi
 Walking 99 checkpoints costs ~255k gas in a single `eth_call`. The same walk offchain is 99
 sequential round trips.
 
-`cca-indexer` sidesteps this by never querying state in the first place: it folds the hints forward
-as `CheckpointUpdated` events stream in, which is the right design for an indexer. But that is
-precisely what forces the infrastructure in point 1, and what opens the staleness window in point 3.
-Anyone who wants an answer *from state* — a wallet, a router, a contract — is back to the serial walk.
+`cca-indexer` sidesteps the walk by folding the hints forward as `CheckpointUpdated` events stream
+in, rather than searching the list on demand — the right design for an indexer. (It does read
+contract state over RPC for other things, ticks and auction parameters among them; it is the
+*checkpoint search* specifically that it never performs.) But maintaining that fold is precisely
+what forces the infrastructure in point 1, and what opens the staleness window in point 3. Anyone
+who wants an answer *from state* — a wallet, a router, a contract — is back to the serial walk.
 
 **Suggestion:** this is inherent to the storage layout and probably not worth changing — but it is
 exactly why a lens-side resolver (point 1) matters so much. Worth an explicit note in the docs that
 bidder-side hint resolution should be done onchain via a lens rather than offchain.
 
-## 3. A bid never moves the clearing price of its own block, and this is not documented
+## 3. Lazy checkpointing is documented; its consequence for exits is not
 
-This cost me the most debugging time, and I think it will surprise most integrators.
+To be fair to the docs: the mechanism *is* stated. The Checkpoints overview says "State is updated
+lazily. At most one checkpoint is written per block, at the top of the first block containing a new
+bid." That sentence contains everything needed to work this out.
 
-`submitBid` calls `checkpoint()` **before** booking the new demand. So the checkpoint written at
-block *N* reflects the clearing price *before* any bid submitted in block *N*. The raised price only
-becomes observable at the next checkpoint.
+What is missing is the consequence, and it is not obvious from that sentence. Because the checkpoint
+is written at the *top* of the block, `submitBid` checkpoints **before** booking the new demand — so
+the checkpoint at block *N* reflects the clearing price *before* any bid submitted in block *N*, and
+a price-moving bid never moves the clearing price of its own block. The raised price only becomes
+observable at the next checkpoint.
+
+This cost me the most debugging time of anything in the integration, having read that line.
 
 The practical consequence for bidders: **you cannot exit in the block you are outbid.** Your exit
 becomes available one checkpoint later. A UI that offers "withdraw" the instant it sees a higher bid
@@ -101,8 +109,10 @@ lens-derived hints settle the same bid in the same block. The same file bounds t
 the window closes the moment anyone checkpoints, and a 256-run fuzz test asserts the two approaches
 agree everywhere else.
 
-**Suggestion:** two things. (a) Call the lazy-checkpoint behaviour out in the technical documentation
-next to the exit functions — it is a one-sentence addition that would save integrators real time.
+**Suggestion:** two things. (a) Repeat the consequence next to the exit functions, where an
+integrator is actually looking: something like "a bid does not move the clearing price of its own
+block, so a bidder cannot exit in the block they are outbid." The mechanism is already in the
+Checkpoints overview; it is the implication at the point of use that is missing.
 (b) Have consumers of `cca-indexer` treat `outbidCheckpointBlock = null` as "unknown, re-check live"
 rather than "never outbid", or resolve hints against live state at transaction-build time. An
 `eth_call` to a lens does this for free.
