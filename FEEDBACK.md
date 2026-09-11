@@ -15,9 +15,7 @@ almost entirely in the **integration surface for bidders**, not the mechanism.
 
 ---
 
-## 1. `exitPartiallyFilledBid` has no hint resolver anywhere in the official tooling
-
-This is the big one, and it is the reason this project exists.
+## 1. Hint resolution is only available to people willing to run an indexer
 
 ```solidity
 function exitPartiallyFilledBid(
@@ -27,15 +25,26 @@ function exitPartiallyFilledBid(
 ) external;
 ```
 
-Both hints must be derived by walking the checkpoint list. `CCALens` ships `AuctionStateLens` (latest
-checkpoint, currency raised, graduation) and `TickDataLens` (initialized tick walk) — but there is no
-equivalent for the one computation a *bidder* actually needs in order to get their money back.
+To be accurate up front: [`cca-indexer`](https://github.com/Uniswap/cca-indexer) **does** resolve
+these hints, and as far as I can tell its bookkeeping is correct — `lastFullyFilledCheckpointBlock`
+is rewritten on every checkpoint where the bid is still fully filled, and `outbidCheckpointBlock` is
+set on the first checkpoint above the bid. I went in expecting to find an off-by-one there and did
+not.
 
-The result is that the protocol's early-exit capability, which is a genuinely nice piece of design,
-is effectively gated behind writing your own indexer.
+The gap is in *shape*, not correctness. Resolving hints currently requires Postgres, an RPC endpoint
+and a running Ponder server, backfilled from the auction's deploy block, with one deployment per
+`AUCTION_CONTRACT_ADDRESS` — and the README marks it "not production-ready and intended for
+development and testing purposes only." A wallet that wants to show "you have 3 CCA positions, one
+is withdrawable" across every auction on a chain has no lightweight option.
 
-**Suggestion:** add a `resolveExitHints(auction, bidId)` view to `CCALens`. It is ~40 lines given
-the monotonicity invariant. I'd be glad to upstream this repo's implementation.
+Meanwhile `CCALens` already ships `AuctionStateLens` and `TickDataLens`, so the lens pattern and its
+deployment story are established — there is just nothing in it for the one computation a *bidder*
+needs in order to get their money back.
+
+**Suggestion:** add a `resolveExitHints(auction, bidId)` entrypoint to `CCALens`. Given the
+monotonic-clearing-price invariant it is a single forward walk; my implementation is ~40 lines of
+logic and resolves 99 checkpoints in one `eth_call` for ~255k gas. I would be glad to upstream it.
+It would also close the window described in the next point, which the indexer cannot.
 
 ## 2. The checkpoint list cannot be binary searched, which makes offchain resolution O(n) *sequential*
 
@@ -53,6 +62,11 @@ round trip per checkpoint, strictly serialized, so it cannot be batched or multi
 Walking 99 checkpoints costs ~255k gas in a single `eth_call`. The same walk offchain is 99
 sequential round trips.
 
+`cca-indexer` sidesteps this by never querying state in the first place: it folds the hints forward
+as `CheckpointUpdated` events stream in, which is the right design for an indexer. But that is
+precisely what forces the infrastructure in point 1, and what opens the staleness window in point 3.
+Anyone who wants an answer *from state* — a wallet, a router, a contract — is back to the serial walk.
+
 **Suggestion:** this is inherent to the storage layout and probably not worth changing — but it is
 exactly why a lens-side resolver (point 1) matters so much. Worth an explicit note in the docs that
 bidder-side hint resolution should be done onchain via a lens rather than offchain.
@@ -69,8 +83,29 @@ The practical consequence for bidders: **you cannot exit in the block you are ou
 becomes available one checkpoint later. A UI that offers "withdraw" the instant it sees a higher bid
 land will produce a reverting transaction.
 
-**Suggestion:** call this out in the technical documentation next to the exit functions. It is a
-one-sentence addition that would save integrators real time.
+### The consequence for `cca-indexer` is sharper, and I think it is worth a look
+
+Lazy checkpointing means there is a window in which *every committed checkpoint* still shows a bid
+winning, while the next checkpoint — the one `exitPartiallyFilledBid` creates when it is called —
+shows it outbid. Anything deriving hints from emitted `CheckpointUpdated` events can only see
+committed checkpoints, so in that window it reports `outbidCheckpointBlock = null`.
+
+Those hints do not merely go stale, they become **unusable**: a null outbid block sends the auction
+down its "never outbid" branch, which requires the auction to have ended, so the call reverts with
+`CannotPartiallyExitBidBeforeEndBlock`. A bidder who is genuinely outbid and genuinely entitled to
+exit early is told, by the indexer, that they cannot.
+
+I have this reproduced as a passing test in
+[`test/PendingCheckpoint.t.sol`](./test/PendingCheckpoint.t.sol): indexer-derived hints revert,
+lens-derived hints settle the same bid in the same block. The same file bounds the claim honestly —
+the window closes the moment anyone checkpoints, and a 256-run fuzz test asserts the two approaches
+agree everywhere else.
+
+**Suggestion:** two things. (a) Call the lazy-checkpoint behaviour out in the technical documentation
+next to the exit functions — it is a one-sentence addition that would save integrators real time.
+(b) Have consumers of `cca-indexer` treat `outbidCheckpointBlock = null` as "unknown, re-check live"
+rather than "never outbid", or resolve hints against live state at transaction-build time. An
+`eth_call` to a lens does this for free.
 
 ## 4. Hint validation errors carry no data
 

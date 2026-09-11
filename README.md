@@ -25,11 +25,9 @@ function exitPartiallyFilledBid(
 
 Those two hints are **checkpoint block numbers that you have to compute yourself**. Pass the wrong
 pair and the call reverts with `InvalidLastFullyFilledCheckpointHint()` or
-`InvalidOutbidBlockCheckpointHint()` — no indication of what the right answer was. Uniswap's own
-`CCALens` reads auction state and tick data, but **nothing in the official tooling computes these
-hints.**
+`InvalidOutbidBlockCheckpointHint()` — no indication of what the right answer was.
 
-And they are genuinely awkward to compute. Checkpoints live in a *sparse mapping* from block number
+They are genuinely awkward to compute. Checkpoints live in a *sparse mapping* from block number
 to `Checkpoint`, threaded by `prev`/`next` pointers:
 
 ```solidity
@@ -42,9 +40,56 @@ walked one pointer at a time, and each hop needs the result of the previous hop.
 one sequential JSON-RPC round trip per checkpoint. On a busy auction that is hundreds of serial
 calls before a user can press "withdraw".
 
+## How this is solved today
+
+Uniswap ships [`cca-indexer`](https://github.com/Uniswap/cca-indexer), a Ponder indexer that tracks
+`lastFullyFilledCheckpointBlock` and `outbidCheckpointBlock` per bid. **It computes the hints
+correctly** — this project is not filling a hole in Uniswap's understanding of the problem, it is
+offering a different shape of answer.
+
+The indexer's shape has costs. It needs Postgres, an RPC endpoint and a running server; it
+backfills from the auction's deployment block; and it is configured with a single
+`AUCTION_CONTRACT_ADDRESS`, so supporting *n* auctions means *n* deployments. Its README calls it
+"not production-ready and intended for development and testing purposes only."
+
+|  | `cca-indexer` | `CCAExitLens` |
+|---|---|---|
+| Infrastructure | Postgres + RPC + server | none — one `eth_call` |
+| Auctions per deployment | one | every auction on the chain |
+| New auction | backfill from deploy block | works immediately |
+| Trust | the indexer operator's database | chain state, read directly |
+| Callable from a contract | **no** | **yes** |
+| Sees the *pending* checkpoint | **no** (see below) | **yes** |
+
+The last two rows are the ones that aren't just convenience. An offchain indexer fundamentally
+cannot be called by a smart contract, which rules out atomic settlement, keepers, and vaults that
+manage CCA positions. And event-driven resolution has a correctness window, below.
+
+## The pending-checkpoint window
+
+A CCA checkpoints *lazily*. `submitBid` checkpoints **before** it books the new demand, so a
+price-moving bid never moves the clearing price of its own block — the raised price is only written
+when something checkpoints again.
+
+So there is a window where every *committed* checkpoint still shows a bid winning, while the next
+checkpoint — the one `exitPartiallyFilledBid` itself creates when called — shows it outbid. Anything
+deriving hints from emitted `CheckpointUpdated` events can only see committed checkpoints, so in
+this window it reports "not outbid" and its hints **revert**:
+
+```
+vm.expectRevert(CannotPartiallyExitBidBeforeEndBlock.selector);
+auction.exitPartiallyFilledBid(bidId, indexerLastFullyFilled, indexerOutbidBlock); // 0 == never outbid
+```
+
+`CCAExitLens` calls `checkpoint()` first, exactly as the exit path does, so it observes the same
+state the exit call will — and its hints settle in that same window. This is demonstrated in
+`test/PendingCheckpoint.t.sol`, which also bounds the claim honestly: the window closes as soon as
+anyone checkpoints, and a 256-run fuzz test asserts the two approaches agree everywhere else.
+
 ## What this does
 
-`CCAExitLens` performs that walk *inside the EVM*, so the entire search costs **one `eth_call`**.
+`CCAExitLens` performs the checkpoint walk *inside the EVM*, so the entire search costs **one
+`eth_call`**.
 
 It returns a complete `ExitPlan`: which function to call, the exact hints to pass, whether the bid
 is settleable at this block, and why not if it isn't.
@@ -82,10 +127,11 @@ Uniswap contracts vendored in `lib/continuous-clearing-auction` (pinned at `6c9e
 
 | | |
 |---|---|
+| Tests passing | **17 / 17** |
 | Checkpoints resolved in one `eth_call` | **99** |
 | Gas for that call | **254,872** (~2.6k per checkpoint) |
 | Offchain RPC round trips replaced | **99 → 1** |
-| Fuzz runs passing | **2,000** |
+| Fuzz runs passing | **2,000** (settlement) + **256** (indexer agreement) |
 
 At ~2.6k gas per checkpoint, a standard 50M-gas `eth_call` resolves roughly 19,000 checkpoints,
 which is why `DEFAULT_MAX_HOPS` is 20,000. Auctions beyond that are still resolvable through the
@@ -111,11 +157,21 @@ the test.
 [PASS] test_pagedWalk_convergesToUnpagedAnswer()
 [PASS] test_resolveExitPlansForOwner()
 [PASS] test_router_settlesOutbidBidWithoutHints()
+
+[PASS] test_lensSeesPendingCheckpointThatAnIndexerCannot()
+[PASS] test_onceCheckpointedBothViewsAgree()
+[PASS] testFuzz_lensAgreesWithCommittedIndexerView(uint256) (runs: 256)
 ```
 
-`test_wrongHints_areRejectedByTheAuction` is the one that shows the lens is doing real work: it
-feeds the auction three plausible *neighbouring* values and shows each is rejected, then settles
-with the lens's answer.
+Two of these carry most of the weight:
+
+- **`test_wrongHints_areRejectedByTheAuction`** shows the lens is doing real work: it feeds the
+  auction three plausible *neighbouring* values, shows each is rejected, then settles with the
+  lens's answer.
+- **`testFuzz_lensAgreesWithCommittedIndexerView`** is a differential test between *two independent
+  implementations* of the same search — the lens walking live state inside the EVM, and a
+  reimplementation of `cca-indexer`'s event-driven bookkeeping — asserting they agree wherever the
+  event-driven one is not stale.
 
 ## Usage
 
@@ -176,18 +232,33 @@ do {
 } while (!plan.hintsResolved);
 ```
 
+## Demo
+
+```bash
+./demo/run-demo.sh
+```
+
+Starts a local anvil node, deploys a **real** `ContinuousClearingAuction` plus the lens and router,
+and plays out the case the project exists for: Alice bids 0.05 ETH, Bob outbids her ten blocks later,
+and Alice recovers **0.044 ETH mid-auction in one transaction** — after the naive hint guess is shown
+to revert. Full transcript and commentary in [DEMO.md](./DEMO.md).
+
 ## Layout
 
 ```
 src/
-  CCAExitLens.sol      Stateless hint resolver. One eth_call per bid.
-  CCAExitRouter.sol    Resolve + settle atomically. Holds no funds.
+  CCAExitLens.sol         Stateless hint resolver. One eth_call per bid.
+  CCAExitRouter.sol       Resolve + settle atomically. Holds no funds.
 script/
-  Deploy.s.sol         Deploys both.
+  Deploy.s.sol            Deploys both.
+  DemoSetup.s.sol         Deploys a demo-sized auction alongside them.
+demo/
+  run-demo.sh             End-to-end scenario against a local anvil node.
 test/
-  CCAExitLens.t.sol    13 differential tests against real auctions, incl. fuzz.
-  Benchmark.t.sol      Cost of resolving across a long checkpoint list.
-  utils/               Auction harness built on the real factory + contracts.
+  CCAExitLens.t.sol       13 differential tests against real auctions, incl. fuzz.
+  PendingCheckpoint.t.sol Lens vs. event-driven resolution, incl. a 256-run agreement fuzz.
+  Benchmark.t.sol         Cost of resolving across a long checkpoint list.
+  utils/                  Auction harness built on the real contracts.
 ```
 
 Both contracts are stateless and hold no funds, so a single deployment per chain is safe to share
