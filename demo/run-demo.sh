@@ -33,8 +33,14 @@ done
 note "anvil up at $RPC"
 
 hr "1. Deploying the lens, the router, and a real Continuous Clearing Auction"
-OUT=$(forge script script/DemoSetup.s.sol:DemoSetup \
-  --rpc-url $RPC --private-key $DEPLOYER_KEY --broadcast --offline 2>&1)
+# Capture the output to parse addresses out of it, but surface it if the deploy fails — under
+# `set -e` a bare `OUT=$(...)` aborts the script with the error swallowed into the variable.
+if ! OUT=$(forge script script/DemoSetup.s.sol:DemoSetup \
+    --rpc-url $RPC --private-key $DEPLOYER_KEY --broadcast 2>&1); then
+  echo "forge script failed:" >&2
+  echo "$OUT" >&2
+  exit 1
+fi
 
 AUCTION=$(grep -oE 'AUCTION=0x[0-9a-fA-F]{40}' <<<"$OUT" | tail -1 | cut -d= -f2)
 LENS=$(grep -oE 'LENS=0x[0-9a-fA-F]{40}' <<<"$OUT" | tail -1 | cut -d= -f2)
