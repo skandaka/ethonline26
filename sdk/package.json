@@ -1,0 +1,27 @@
+{
+  "name": "cca-exit-sdk",
+  "version": "0.1.0",
+  "description": "Resolve Uniswap Continuous Clearing Auction bid exit hints in a single eth_call.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "bin": {
+    "cca-exit": "bin/cca-exit.js"
+  },
+  "files": [
+    "src",
+    "bin"
+  ],
+  "scripts": {
+    "demo": "node bin/cca-exit.js"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
