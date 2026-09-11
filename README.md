@@ -318,6 +318,12 @@ See [FEEDBACK.md](./FEEDBACK.md) — seven concrete findings from building again
 documentation bug where the deployment guide documents a factory function that does not exist in
 the deployed contract.
 
+## Provenance
+
+Built by Claude Code. [AI-DISCLOSURE.md](./AI-DISCLOSURE.md) has the prompts verbatim, how the
+problem was found, the incorrect claim that was caught and retracted before submission, and the
+known limits. [SUBMISSION.md](./SUBMISSION.md) tracks what still needs a human.
+
 ## License
 
 MIT. The vendored Uniswap contracts under `lib/` are MIT and belong to Uniswap.

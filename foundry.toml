@@ -24,6 +24,10 @@ remappings = [
 [profile.default.fuzz]
 runs = 256
 
+# Used by CI. The workflow re-runs the settlement property at a much higher count separately.
+[profile.ci.fuzz]
+runs = 256
+
 [fmt]
 line_length = 120
 tab_width = 4

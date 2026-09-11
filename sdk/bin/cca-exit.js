@@ -46,8 +46,9 @@ const USAGE = `cca-exit — Uniswap CCA position tooling
   scan    --lens <addr> --auction <addr> --owner <addr>
           Resolve every plan for a wallet across the auction (one eth_call).
 
-  settle  --router <addr> --auction <addr> --bid <id> --key <privkey>
+  settle  --router <addr> --auction <addr> --bid <id>
           Resolve hints on chain and settle atomically.
+          Signing key from CCA_EXIT_PRIVATE_KEY (preferred) or --key <privkey>.
 
   Common: --rpc <url>   (default http://127.0.0.1:8545)
 `;
@@ -90,8 +91,19 @@ async function main() {
   }
 
   if (cmd === 'settle') {
-    need(args, 'router', 'auction', 'bid', 'key');
-    const account = privateKeyToAccount(args.key);
+    need(args, 'router', 'auction', 'bid');
+
+    // Prefer the environment variable: process arguments are visible to other users via `ps` and
+    // land in shell history, so --key is kept only as a convenience for local test keys.
+    const key = process.env.CCA_EXIT_PRIVATE_KEY ?? args.key;
+    if (!key) {
+      console.error('no signing key: set CCA_EXIT_PRIVATE_KEY, or pass --key for local test keys');
+      process.exit(1);
+    }
+    if (!process.env.CCA_EXIT_PRIVATE_KEY) {
+      console.warn('warning: --key is visible in `ps` and shell history; prefer CCA_EXIT_PRIVATE_KEY');
+    }
+    const account = privateKeyToAccount(key);
     const wallet = createWalletClient({ account, transport });
     const call = buildRouterExitCall({
       router: args.router,

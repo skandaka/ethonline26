@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  test:
+    name: Build, test and demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Build
+        run: forge build --sizes
+
+      - name: Test
+        run: forge test -vv
+
+      - name: Heavy fuzz
+        # The settlement property is the core safety claim, so give it a deeper run than the
+        # default 256 before anything merges.
+        run: forge test --match-test testFuzz_ --fuzz-runs 2000
+
+      - name: Gas benchmark
+        run: forge test --match-contract BenchmarkTest -vv
+
+      - name: End-to-end demo on a local chain
+        # Runs the real auction scenario against anvil. Proves the demo in DEMO.md is reproducible
+        # rather than a transcript that rotted.
+        run: ./demo/run-demo.sh
+
+  sdk:
+    name: SDK end-to-end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install SDK dependencies
+        working-directory: sdk
+        run: npm ci
+
+      - name: Drive the scenario through the SDK and CLI
+        run: ./demo/run-sdk-demo.sh

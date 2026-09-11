@@ -66,7 +66,8 @@ $CLI scan --rpc $RPC --lens "$LENS" --auction "$AUCTION" --owner "$ALICE"
 BEFORE=$(cast balance $ALICE --rpc-url $RPC)
 
 hr "\$ cca-exit settle --bid 0"
-$CLI settle --rpc $RPC --router "$ROUTER" --auction "$AUCTION" --bid 0 --key $ALICE_KEY
+CCA_EXIT_PRIVATE_KEY=$ALICE_KEY \
+  $CLI settle --rpc $RPC --router "$ROUTER" --auction "$AUCTION" --bid 0
 
 AFTER=$(cast balance $ALICE --rpc-url $RPC)
 hr "Result"
