@@ -22,6 +22,10 @@ real transaction against the unmodified Uniswap contracts.
 
 ## Transcript
 
+Captured from an actual run. CI executes this same script on every commit, so the behaviour below
+is verified rather than remembered — though the exact block numbers and gas-adjusted balances shift
+with the run.
+
 ```
 0. Starting a local chain
   anvil up at http://127.0.0.1:8545
@@ -33,17 +37,17 @@ real transaction against the unmodified Uniswap contracts.
 
 2. Alice bids 0.05 ETH at 0.0011 ETH/token
   bid 0 submitted by alice
-  alice balance: 9999.949725071610931220 ETH
+  alice balance: 9999.949759205150841440 ETH
 
 3. Bob floods the book at 0.0017 ETH/token, outbidding Alice
   bid 1 submitted by bob — the clearing price will move above alice
 
 4. Alice's position, according to the lens (one eth_call)
-  raw plan: (0, 0x7099...79C8, 3, 15, 16, true, (0, 0), 3,
+  raw plan: (0, 0x7099...79C8, 3, 16, 17, true, (0, 0), 3,
              87150978765690771352898345, 134687876274249373909024715, true, false)
   route                          : EXIT_PARTIALLY_FILLED
-  lastFullyFilledCheckpointBlock : 15
-  outbidBlock                    : 16
+  lastFullyFilledCheckpointBlock : 16
+  outbidBlock                    : 17
 
 5. What happens without the hints
   calling exitPartiallyFilledBid(0, 0, 0) — the naive guess:
@@ -53,11 +57,11 @@ real transaction against the unmodified Uniswap contracts.
   router.exit(auction, 0) succeeded
 
 Result
-  alice before : 9999.949725071610931220 ETH
-  alice after  : 9999.993962573023827318 ETH
-  recovered    : 0.044237501412896098 ETH  (net of gas)
+  alice before : 9999.949759205150841440 ETH
+  alice after  : 9999.993940530599803513 ETH
+  recovered    : 0.044181325448962073 ETH  (net of gas)
 
-  bid struct after exit: (4, 400000, 17, 8715..., 0x7099...79C8, 3.961e45, 5729166666666666666)
+  bid struct after exit: (5, 500000, 18, 8715..., 0x7099...79C8, 3.961e45, 5789473684210526315)
   (non-zero exitedBlock == settled)
 
 Alice recovered her capital mid-auction, in one transaction, with no indexer.
@@ -66,7 +70,7 @@ Alice recovered her capital mid-auction, in one transaction, with no indexer.
 ## Reading the output
 
 **Step 4** is the whole contribution in one line. A single `eth_call` returns
-`route = EXIT_PARTIALLY_FILLED` with hints `(15, 16)` — the last checkpoint below Alice's price and
+`route = EXIT_PARTIALLY_FILLED` with hints `(16, 17)` — the last checkpoint below Alice's price and
 the first one above it. `hops = 3` says it walked three checkpoints to find them. No database, no
 backfill, no indexer; the auction was deployed seconds earlier.
 
@@ -77,9 +81,9 @@ guess and the auction rejects it.
 the auction address and the bid id.
 
 **The result** shows Alice recovering **0.044 ETH** of her 0.05 ETH, net of gas, while the auction is
-still live. The remainder is not lost: `tokensFilled = 5.729e18` in the bid struct is the ~5.73
-tokens she actually bought during the blocks when her bid was clearing, claimable after the auction's
-claim block. And `exitedBlock = 17` confirms settlement.
+still live. The remainder is not lost: `tokensFilled = 5789473684210526315` in the bid struct is the
+~5.79 tokens she actually bought during the blocks when her bid was clearing, claimable after the
+auction's claim block. And `exitedBlock = 18` confirms settlement.
 
 ## Why the mid-auction part matters
 
